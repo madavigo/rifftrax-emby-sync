@@ -100,8 +100,6 @@ if __name__ == "__main__":
 
 
             # Update metadata
-            # ... (Your existing Python code to update metadata)
-            # This is where your existing Python logic would be placed.)
 
             def get_movie_title_from_exif(file_path):
                 exif_info = pex.get_json(file_path)
@@ -267,8 +265,6 @@ if __name__ == "__main__":
                     #    update_emby_title(movie_id, movie_title, api_key, base_url)
             else:
                 print("Movie title could not be obtained.")
-
-            #print_separator(banner)
 
             if delete_files:
                 mp4_file_path.unlink()
