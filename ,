@@ -1,13 +1,12 @@
 #!/usr/bin/python
 
 '''
-1. Iterates through RiffTrax mp4 files which have been purchased and dowloaded from RiffTrax.com
+1. Iterates through mp4s in Downloads directory
 2. Reads EXIF and renames file based on title
-3. Moves the file to the rifftrax folder Emby is monitoring
-4. Refreshes Emby Library
-5. Determines URL for RiffTrax Poster and Applies to new Riff
+3. Scp file to truenas rifftrax folder
+4. Determines URL for RiffTrax Poster and Applies to new Riff
 
-Requires perl-Image-ExifTool be installed on the system
+Requires perl-Image-ExifTool
 
 Set the Following Environment variables
 EMBY_API_KEY
@@ -40,15 +39,6 @@ delete_choice = input("Do you want to delete the original files? (yes/no): ")
 delete_files = delete_choice.lower() == 'yes'
 
 if __name__ == "__main__":
-
-    '''
-    The following variables must be set to the appropriate values for your environment
-
-    src_dir is whereever you are saving the RiffTrax mp4s
-    dest_dir is the directory on the server where the mp4s will be copied to, this is the directory that Emby will monitor
-    hostname is the hostname of the server where the emby library files are stored
-
-    '''
 
     src_dir = Path(os.getenv("HOME", "/home/mgolden")) / "Downloads"
     dest_dir = Path("/mnt/SATA1/RiffTrax")
@@ -101,6 +91,8 @@ if __name__ == "__main__":
 
 
             # Update metadata
+            # ... (Your existing Python code to update metadata)
+            # This is where your existing Python logic would be placed.)
 
             def get_movie_title_from_exif(file_path):
                 exif_info = pex.get_json(file_path)
@@ -254,7 +246,7 @@ if __name__ == "__main__":
 
             if movie_title:
                 if movie_title == "How to be Courteous to Mary Jo":
-                    # Hardcode the poster URL if the title matches as this is a "one off" URL apparently
+                    # Hardcode the poster URL if the title matches
                     poster_url = "https://www.rifftrax.com/goodie/how-to-be-courteous-to-mary-jo"
                 else:
                     poster_url = get_poster_url_from_title(movie_title)
@@ -266,6 +258,8 @@ if __name__ == "__main__":
                     #    update_emby_title(movie_id, movie_title, api_key, base_url)
             else:
                 print("Movie title could not be obtained.")
+
+            #print_separator(banner)
 
             if delete_files:
                 mp4_file_path.unlink()
