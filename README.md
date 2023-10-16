@@ -26,9 +26,9 @@ EMBY_API_KEY: Your Emby API key
 EMBY_BASE_URL: The base URL for your Emby servers api endpoint
 
 #### Installation
-Clone this repository: git clone https://github.com/madavigo/rifftrax-emby-sync.git
-Navigate to the directory: cd rifftrax-emby-sync
-Install the required Python packages: pip install -r requirements.txt
+1. Clone this repository: git clone https://github.com/madavigo/rifftrax-emby-sync.git
+2. Navigate to the directory: cd rifftrax-emby-sync
+3. Install the required Python packages: pip install -r requirements.txt
 
 #### Usage
 Open a terminal and navigate to the directory where the script is located.
