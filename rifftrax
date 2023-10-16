@@ -1,0 +1,275 @@
+#!/usr/bin/python
+
+'''
+1. Iterates through mp4s in Downloads directory assuming they are RiffTrax files which have been purchased and dowloaded from RiffTrax.com
+2. Reads EXIF and renames file based on title
+3. moves the file to the rifftrax folder Emby is monitoring
+4. Determines URL for RiffTrax Poster and Applies to new Riff
+
+Requires perl-Image-ExifTool be installed on the system
+
+Set the Following Environment variables
+EMBY_API_KEY
+EMBY_BASE_URL
+
+'''
+
+import os
+import time
+import sys
+import requests
+import json
+import base64
+from bs4 import BeautifulSoup
+import pyexifinfo as pex
+import subprocess
+from pathlib import Path
+import shutil
+
+# Fetching API and Base URL from environment variables
+api_key = os.getenv("EMBY_API_KEY", "")
+base_url = os.getenv("EMBY_BASE_URL", "")
+
+# Validate that API and Base URL are available
+if not api_key or not base_url:
+    print("API key or Base URL not found. Exiting.")
+    sys.exit(1)
+
+delete_choice = input("Do you want to delete the original files? (yes/no): ")
+delete_files = delete_choice.lower() == 'yes'
+
+if __name__ == "__main__":
+
+    '''
+    The following variables must be set to the appropriate values for your environment
+
+    src_dir is whereever you are saving the RiffTrax mp4s
+    dest_dir is the directory on the server where the mp4s will be copied to, this is the directory that Emby will monitor
+    hostname is the hostname of the server where the emby library files are stored
+
+    '''
+
+    src_dir = Path(os.getenv("HOME", "/home/mgolden")) / "Downloads"
+    dest_dir = Path("/mnt/SATA1/RiffTrax")
+    hostname = "truenas"
+
+    for file_path in src_dir.glob("*.mp4"):
+        mp4_file_path = file_path
+        file_name = file_path.name
+
+        # Check if file exists on the Truenas host
+        file_exists = subprocess.run(
+            ["ssh", hostname, f"[ -e '{dest_dir / file_name}' ]"],
+            capture_output=True).returncode == 0
+
+        if file_exists:
+            print(f"File already exists on {hostname}: {file_name}")
+            if delete_files:
+                file_path.unlink()
+                print(f"Deleted: {file_path}")
+
+        else:
+
+            def get_movie_title_from_exif(file_path):
+                exif_info = pex.get_json(file_path)
+                if len(exif_info) > 0 and "QuickTime:Title" in exif_info[0]:
+                     movie_title = exif_info[0]['QuickTime:Title']
+                     return movie_title
+                else:
+                    return None
+
+            movie_title = get_movie_title_from_exif(mp4_file_path)
+
+            # If movie_title is fetched successfully from the EXIF info, rename the file
+            if movie_title:
+                # Construct the new file path
+                new_file_path = src_dir / f"{movie_title}.mp4"
+
+                # Rename the file
+                os.rename(mp4_file_path, new_file_path)
+                print(f"File renamed to: {movie_title}.mp4")
+                mp4_file_path = new_file_path
+
+                # Now use new_file_path for scp transfer
+                subprocess.run(["scp", str(new_file_path), f"{hostname}:{dest_dir}"])
+
+
+                # Refresh Library
+                requests.post(f"{base_url}/emby/Library/Refresh", headers={"X-Emby-Token": api_key})
+                time.sleep(10)
+
+
+            # Update metadata
+            # ... (Your existing Python code to update metadata)
+            # This is where your existing Python logic would be placed.)
+
+            def get_movie_title_from_exif(file_path):
+                exif_info = pex.get_json(file_path)
+                #print(f"Raw EXIF info: {exif_info}")  # Debug print statement
+                if len(exif_info) > 0 and "QuickTime:Title" in exif_info[0]:
+                    print(f"Source File: {exif_info[0]['SourceFile']}")
+                    print(f"Title from EXIF info: {exif_info[0]['QuickTime:Title']}")
+                else:
+                    print("Title not found in EXIF info")
+                if len(exif_info) > 0:
+                    movie_title = exif_info[0].get("QuickTime:Title", "")
+                    return movie_title
+                return None
+
+            def get_poster_url_from_title(title):
+                def try_fetch_url(title):
+                    title = title.lower().replace(" ", "-").replace("'", "").replace(":", "").replace("&#039;", "").replace("(", "").replace(")", "").replace("!", "")
+                    print(f"title var: {title}") # Debug print
+                    url = f"https://www.rifftrax.com/{title}"
+                    print(f"Trying to access URL: {url}")  # Debug print
+
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    response = requests.get(url, headers=headers)
+                    if response.status_code not in {200, 204}:
+                        print(f"Unexpected status code: {response.status_code}")
+                        return None
+
+                    soup = BeautifulSoup(response.text, 'html.parser')
+
+                    parent_div = soup.find("div", {"class": "panel-pane pane-entity-field pane-node-field-poster"})
+                    img_tag = parent_div.find("img", {"class": "img-responsive"})
+
+                    # Debug dump of all img class objects
+                    #all_imgs = soup.find_all('img')
+                    #for i, img in enumerate(all_imgs):
+                        #print(f"Image {i+1}:")
+                        #print(f"  Class: {img.get('class')}")
+                        #print(f"  Alt: {img.get('alt')}")
+
+                    if img_tag:
+                        return img_tag['src']
+
+                    return None
+
+                url = try_fetch_url(title)
+                if url is not None:
+                    return url
+
+                # Only try additional searches with a-, an-, the- if the first search fails
+                possible_titles = ["a-" + title, "an-" + title, "the-" + title]
+                for t in possible_titles:
+                    url = try_fetch_url(t)
+                    if url:
+                        return url
+                return None
+
+            def update_emby_title(movie_id, new_title, api_key, base_url):
+                HEADERS = {
+                    "X-Emby-Token": api_key,
+                    "Content-Type": "application/json"
+                }
+                update_url = f"{base_url}/emby/Items/{movie_id}"
+
+                payload = {
+                    "Name": new_title
+                }
+
+                response = requests.post(update_url, headers=HEADERS, json=payload)
+
+                if response.status_code in [200, 204]:
+                    print(f"Successfully updated title to '{new_title}'.")
+                else:
+                    print(f"Failed to update title. Status code: {response.status_code}")
+                    print("Response Text: ", response.text)
+
+            def update_emby_image(movie_name, image_url, api_key, base_url):
+                HEADERS = {
+                    "X-Emby-Token": api_key,
+                    "Content-Type": "application/octet-stream"
+                }
+
+                movie_name_search = movie_name.lower().replace(" ", "+").replace("'","").replace(":", "").replace("&#039;", "")
+
+                def search_emby(search_term):
+                    response = requests.get(
+                        f"{base_url}/emby/Items",
+                        headers=HEADERS,
+                        params={
+                            "parentId": 4,
+                            "searchTerm": movie_name_search
+                        }
+                    )
+                    # Debugging information if uncommented
+                    #print(f"Request URL: {response.request.url}")
+                    #print(f"Status Code: {response.status_code}")
+                    #print(f"Response JSON: {response.json()}")
+
+                    if response.status_code == 200:
+                        response_data = response.json()
+                        return response_data.get('Items', [])
+                    else:
+                        print(f"Failed to fetch movie ID. Status code: {response.status_code}")
+                        return []
+                # First attempt to find the movie
+                items = search_emby(movie_name_search)
+
+                # If not found, try with "A ", "An ", "The "
+                if not items:
+                    possible_search_terms = ["a+" + movie_name_search, "an+" + movie_name_search, "the+" + movie_name_search]
+                    for term in possible_search_terms:
+                        items = search_emby(term)
+                        if items:
+                            break
+
+                # Nothing was found so we are done here or need to adjust the script
+                if not items:
+                    print(f"No movies found with the given name. {movie_name_search}")
+                    return
+
+                # Set movie_id to first search result
+                movie_id = items[0]['Id']
+
+                # Fetch the image from the URL
+                response = requests.get(image_url)
+                if response.status_code != 200:
+                    print("Failed to download image.")
+                    return
+
+                image_data = response.content
+                image_data = base64.b64encode(image_data).decode("utf-8")
+
+
+                headers = {
+                    'X-Emby-Token': api_key,
+                    'Content-Type': 'image/jpeg'
+                }
+
+                update_url = f"{base_url}/emby/Items/{movie_id}/Images/Primary"
+
+                response = requests.post(update_url, headers=headers, data=image_data)
+
+                if response.status_code in [200,204]:
+                    print("Successfully updated image.")
+                    return movie_id,f"Updated: {movie_name_search}"
+                else:
+                    print(f"Failed to update image. Status code: {response.status_code}")
+                    return f"Failed: {movie_name_search}"
+
+                # Main logic
+            movie_title = get_movie_title_from_exif(mp4_file_path)
+
+            if movie_title:
+                if movie_title == "How to be Courteous to Mary Jo":
+                    # Hardcode the poster URL if the title matches as this is a "one off" URL apparently
+                    poster_url = "https://www.rifftrax.com/goodie/how-to-be-courteous-to-mary-jo"
+                else:
+                    poster_url = get_poster_url_from_title(movie_title)
+
+                if poster_url:
+                    print(f"Poster URL: {poster_url}")
+                    movie_id = update_emby_image(movie_title, poster_url, api_key, base_url)
+                    # If movie_id is not None, proceed to update titl
+                    #    update_emby_title(movie_id, movie_title, api_key, base_url)
+            else:
+                print("Movie title could not be obtained.")
+
+            #print_separator(banner)
+
+            if delete_files:
+                mp4_file_path.unlink()
+                print(f"Deleted: {mp4_file_path}")
